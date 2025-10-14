@@ -1,7 +1,11 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify
-import sqlite3, csv, uuid, json
-from flask_socketio import SocketIO, emit, join_room
 import os
+import uuid
+import json
+import csv
+import random
+import sqlite3
+from flask import Flask, render_template, request, jsonify, url_for
+from flask_socketio import SocketIO, emit, join_room
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
@@ -9,7 +13,7 @@ socketio = SocketIO(app)
 
 DB = 'sessions.db'
 
-# --- Database & movies setup ---
+# --- Database setup ---
 def init_db():
     conn = sqlite3.connect(DB)
     c = conn.cursor()
@@ -17,12 +21,14 @@ def init_db():
     CREATE TABLE IF NOT EXISTS sessions (
         session_id TEXT PRIMARY KEY,
         user1_votes TEXT,
-        user2_votes TEXT
+        user2_votes TEXT,
+        movie_order TEXT
     )
     ''')
     conn.commit()
     conn.close()
 
+# --- Load movies ---
 def load_movies():
     movies = []
     with open('movies.csv') as f:
@@ -31,21 +37,23 @@ def load_movies():
             movies.append({"id": int(row["id"]), "title": row["title"]})
     return movies
 
-init_db()
 MOVIES = load_movies()
+init_db()
 
 # --- Routes ---
 @app.route('/')
 def index():
-    return redirect(url_for('create_session'))
+    return jsonify({"message": "Go to /create to start a session"})
 
 @app.route('/create')
 def create_session():
     session_id = str(uuid.uuid4())
+    movie_order = [film['id'] for film in MOVIES]
+    random.shuffle(movie_order)
     conn = sqlite3.connect(DB)
     c = conn.cursor()
-    c.execute("INSERT INTO sessions (session_id, user1_votes, user2_votes) VALUES (?, ?, ?)",
-              (session_id, "{}", "{}"))
+    c.execute("INSERT INTO sessions (session_id, user1_votes, user2_votes, movie_order) VALUES (?, ?, ?, ?)",
+              (session_id, "{}", "{}", json.dumps(movie_order)))
     conn.commit()
     conn.close()
     share_link = url_for('session_page', session_id=session_id, user='user2', _external=True)
@@ -59,15 +67,20 @@ def session_page(session_id, user):
 def next_film(session_id, user):
     conn = sqlite3.connect(DB)
     c = conn.cursor()
-    c.execute("SELECT user1_votes, user2_votes FROM sessions WHERE session_id=?", (session_id,))
+    c.execute("SELECT user1_votes, user2_votes, movie_order FROM sessions WHERE session_id=?", (session_id,))
     row = c.fetchone()
     votes1 = json.loads(row[0] or "{}")
     votes2 = json.loads(row[1] or "{}")
+    movie_order = json.loads(row[2])
+
     voted_ids = set(votes1.keys()).union(set(votes2.keys()))
-    for film in MOVIES:
-        if str(film['id']) not in voted_ids:
+
+    for film_id in movie_order:
+        if str(film_id) not in voted_ids:
+            film = next(f for f in MOVIES if f['id'] == film_id)
             conn.close()
             return jsonify(film)
+
     conn.close()
     return jsonify(None)
 
@@ -95,12 +108,11 @@ def vote(session_id, user):
     conn.commit()
     conn.close()
 
-    # Notify all users in this session room about updated matches
-    matches = [film for film in MOVIES if votes1.get(str(film['id'])) is True and votes2.get(str(film['id'])) is True]
+    matches = [film for film in MOVIES if votes1.get(str(film['id'])) and votes2.get(str(film['id']))]
     socketio.emit('update_matches', matches, room=session_id)
     return jsonify(success=True)
 
-# --- SocketIO events ---
+# --- Socket.IO ---
 @socketio.on('join')
 def on_join(data):
     session_id = data['session_id']
@@ -110,5 +122,3 @@ def on_join(data):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     socketio.run(app, host='0.0.0.0', port=port)
-
-
