@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Film Matcher</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+    body { font-family: Arial; text-align:center; margin-top:50px; }
+    button { padding:10px 20px; margin:5px; font-size:16px; }
+</style>
+</head>
+<body>
+<h1>🎬 Film Matcher</h1>
+<h2 id="user-label">{{ user }}</h2>
+<div id="film-card">
+    <h2 id="film-title">Loading...</h2>
+    <button id="yes-btn">✅ Yes</button>
+    <button id="no-btn">❌ No</button>
+</div>
+
+<h3>Matches:</h3>
+<ul id="matches"></ul>
+
+<script>
+const session_id = "{{ session_id }}";
+const user = "{{ user }}";
+let currentFilm = null;
+
+const socket = io();
+socket.emit('join', { session_id });
+
+socket.on('update_matches', (matches) => {
+    const list = document.getElementById('matches');
+    list.innerHTML = '';
+    matches.forEach(m => {
+        const li = document.createElement('li');
+        li.textContent = m.title;
+        list.appendChild(li);
+    });
+});
+
+async function loadNextFilm() {
+    const res = await fetch(`/next_film/${session_id}/${user}`);
+    const film = await res.json();
+    if (!film) {
+        document.getElementById('film-title').textContent = "🎉 No more films!";
+        currentFilm = null;
+        return;
+    }
+    currentFilm = film;
+    document.getElementById('film-title').textContent = film.title;
+}
+
+async function voteFilm(choice) {
+    if (!currentFilm) return;
+    await fetch(`/vote/${session_id}/${user}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ film_id: currentFilm.id, vote: choice })
+    });
+    loadNextFilm();
+}
+
+document.getElementById('yes-btn').addEventListener('click', () => voteFilm(true));
+document.getElementById('no-btn').addEventListener('click', () => voteFilm(false));
+
+loadNextFilm();
+</script>
+</body>
+</html>
