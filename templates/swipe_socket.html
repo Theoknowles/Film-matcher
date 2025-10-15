@@ -7,13 +7,19 @@
 <style>
     body { font-family: Arial; text-align:center; margin-top:50px; }
     button { padding:10px 20px; margin:5px; font-size:16px; }
+    #film-poster { max-width:200px; margin:10px; }
 </style>
 </head>
 <body>
 <h1>🎬 Film Matcher</h1>
 <h2 id="user-label">{{ user }}</h2>
+
 <div id="film-card">
     <h2 id="film-title">Loading...</h2>
+    <img id="film-poster" src="" alt="Poster">
+    <div id="availability">
+        Netflix: ❌ | Prime: ❌ | Disney+: ❌ 
+    </div>
     <button id="yes-btn">✅ Yes</button>
     <button id="no-btn">❌ No</button>
 </div>
@@ -44,11 +50,21 @@ async function loadNextFilm() {
     const film = await res.json();
     if (!film) {
         document.getElementById('film-title').textContent = "🎉 No more films!";
+        document.getElementById('film-poster').src = "";
+        document.getElementById('availability').innerHTML = "";
         currentFilm = null;
         return;
     }
     currentFilm = film;
     document.getElementById('film-title').textContent = film.title;
+    document.getElementById('film-poster').src = film.poster || "";
+
+    const avail = film.sources || {};
+    document.getElementById('availability').innerHTML = `
+        Netflix: ${avail.netflix ? "✅" : "❌"} | 
+        Prime: ${avail.prime ? "✅" : "❌"} | 
+        Disney+: ${avail.disney_plus ? "✅" : "❌"}
+    `;
 }
 
 async function voteFilm(choice) {
