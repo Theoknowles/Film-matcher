@@ -43,21 +43,34 @@ init_db()
 # --- Routes ---
 @app.route('/')
 def index():
-    return jsonify({"message": "Go to /create to start a session"})
+    return render_template('create.html', session_id=None, share_link=None)
+
 
 @app.route('/create')
 def create_session():
+    # Generate unique session ID
     session_id = str(uuid.uuid4())
+
+    # Randomize movie order
     movie_order = [film['id'] for film in MOVIES]
     random.shuffle(movie_order)
+
+    # Save session in DB
     conn = sqlite3.connect(DB)
     c = conn.cursor()
-    c.execute("INSERT INTO sessions (session_id, user1_votes, user2_votes, movie_order) VALUES (?, ?, ?, ?)",
-              (session_id, "{}", "{}", json.dumps(movie_order)))
+    c.execute(
+        "INSERT INTO sessions (session_id, user1_votes, user2_votes, movie_order) VALUES (?, ?, ?, ?)",
+        (session_id, "{}", "{}", json.dumps(movie_order))
+    )
     conn.commit()
     conn.close()
+
+    # Build shareable link for the second user
     share_link = url_for('session_page', session_id=session_id, user='user2', _external=True)
+
+    # Render template with session info
     return render_template('create.html', session_id=session_id, share_link=share_link)
+
 
 @app.route('/session/<session_id>/<user>')
 def session_page(session_id, user):
