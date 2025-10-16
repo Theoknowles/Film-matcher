@@ -2,3 +2,4 @@ Flask
 Flask-SocketIO
 eventlet
 gunicorn
+requests==2.31.0
