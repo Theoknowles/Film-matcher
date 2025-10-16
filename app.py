@@ -3,6 +3,7 @@ import uuid
 import json
 import random
 import sqlite3
+import requests
 from flask import Flask, render_template, request, jsonify, url_for
 from flask_socketio import SocketIO, emit, join_room
 
@@ -11,6 +12,8 @@ app.config['SECRET_KEY'] = 'secret!'
 socketio = SocketIO(app)
 
 DB = 'sessions.db'
+WATCHMODE_API_KEY = os.environ.get("WATCHMODE_API_KEY")
+OMDB_API_KEY = os.environ.get("OMDB_API_KEY")
 
 # --- Database setup ---
 def init_db():
@@ -38,6 +41,71 @@ def init_db():
     conn.close()
 
 init_db()
+
+# --- Populate movies if empty ---
+def populate_movies(limit=10):
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM movies")
+    if c.fetchone()[0] > 0:
+        conn.close()
+        return  # already populated
+
+    url = f"https://api.watchmode.com/v1/list-titles/?apiKey={WATCHMODE_API_KEY}&types=movie&limit={limit}"
+    print("Fetching Watchmode titles from:", url)
+    res = requests.get(url)
+    if res.status_code != 200:
+        print("Watchmode fetch failed:", res.status_code)
+        conn.close()
+        return
+
+    data = res.json()
+    titles = data.get('titles', data)
+    added_count = 0
+
+    for t in titles:
+        movie_id = t['id']
+        title = t['title']
+        imdb_id = t.get('imdb_id')
+
+        sources_url = f"https://api.watchmode.com/v1/title/{movie_id}/sources/?apiKey={WATCHMODE_API_KEY}"
+        sources_res = requests.get(sources_url)
+        if sources_res.status_code != 200:
+            continue
+        sources_data = sources_res.json()
+
+        availability = {
+            "netflix": any(s['name'] == 'Netflix' and s['region'] == 'GB' for s in sources_data),
+            "prime": any(s['name'] == 'Amazon Prime Video' and s['region'] == 'GB' for s in sources_data),
+            "disney_plus": any(s['name'] == 'Disney Plus' and s['region'] == 'GB' for s in sources_data),
+            "iplayer": any(s['name'] == 'BBC iPlayer' and s['region'] == 'GB' for s in sources_data),
+            "all4": any(s['name'] == 'All 4' and s['region'] == 'GB' for s in sources_data),
+        }
+
+        if not any(availability.values()):
+            continue
+
+        poster_url = None
+        if imdb_id:
+            omdb_url = f"http://www.omdbapi.com/?i={imdb_id}&apikey={OMDB_API_KEY}"
+            omdb_res = requests.get(omdb_url)
+            if omdb_res.status_code == 200:
+                omdb_data = omdb_res.json()
+                if omdb_data.get("Poster") and omdb_data["Poster"] != "N/A":
+                    poster_url = omdb_data["Poster"]
+
+        c.execute(
+            "INSERT OR REPLACE INTO movies (id, title, poster_url, imdb_id, sources) VALUES (?, ?, ?, ?, ?)",
+            (movie_id, title, poster_url, imdb_id, json.dumps(availability))
+        )
+        added_count += 1
+
+    conn.commit()
+    conn.close()
+    print(f"Cache populated with {added_count} movies.")
+
+# --- Populate at startup ---
+populate_movies(limit=10)
 
 # --- Routes ---
 @app.route('/')
@@ -155,5 +223,4 @@ if __name__ == '__main__':
 
     print(f"✅ Starting Flask app on http://127.0.0.1:{free_port}")
 
-    # Use Werkzeug (no eventlet)
     socketio.run(app, host='127.0.0.1', port=free_port, debug=True, use_reloader=False, allow_unsafe_werkzeug=True)
