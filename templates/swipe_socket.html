@@ -7,7 +7,9 @@
 <style>
     body { font-family: Arial; text-align:center; margin-top:50px; }
     button { padding:10px 20px; margin:5px; font-size:16px; }
-    #film-poster { max-width:200px; margin:10px; }
+    #film-card { margin-bottom: 20px; }
+    img { max-width:200px; margin: 10px auto; display:block; }
+    .sources span { margin:0 10px; font-size:24px; }
 </style>
 </head>
 <body>
@@ -17,8 +19,12 @@
 <div id="film-card">
     <h2 id="film-title">Loading...</h2>
     <img id="film-poster" src="" alt="Poster">
-    <div id="availability">
-        Netflix: ❌ | Prime: ❌ | Disney+: ❌ 
+    <div class="sources">
+        <span id="netflix">❌ Netflix</span>
+        <span id="prime">❌ Prime</span>
+        <span id="disney_plus">❌ Disney+</span>
+        <span id="iplayer">❌ iPlayer</span>
+        <span id="all4">❌ All4</span>
     </div>
     <button id="yes-btn">✅ Yes</button>
     <button id="no-btn">❌ No</button>
@@ -48,23 +54,38 @@ socket.on('update_matches', (matches) => {
 async function loadNextFilm() {
     const res = await fetch(`/next_film/${session_id}/${user}`);
     const film = await res.json();
+
     if (!film) {
         document.getElementById('film-title').textContent = "🎉 No more films!";
         document.getElementById('film-poster').src = "";
-        document.getElementById('availability').innerHTML = "";
+        ['netflix','prime','disney_plus','iplayer','all4'].forEach(id => {
+            document.getElementById(id).textContent = `❌ ${id}`;
+        });
         currentFilm = null;
         return;
     }
+
     currentFilm = film;
     document.getElementById('film-title').textContent = film.title;
-    document.getElementById('film-poster').src = film.poster || "";
+    document.getElementById('film-poster').src = film.poster_url || "";
 
-    const avail = film.sources || {};
-    document.getElementById('availability').innerHTML = `
-        Netflix: ${avail.netflix ? "✅" : "❌"} | 
-        Prime: ${avail.prime ? "✅" : "❌"} | 
-        Disney+: ${avail.disney_plus ? "✅" : "❌"}
-    `;
+    // Update streaming availability icons
+    const serviceNames = {
+        netflix: 'Netflix',
+        prime: 'Prime',
+        disney_plus: 'Disney+',
+        iplayer: 'iPlayer',
+        all4: 'All4'
+    };
+
+    Object.keys(serviceNames).forEach(id => {
+        if (film.sources && film.sources[id] !== undefined) {
+            const available = film.sources[id];
+            document.getElementById(id).textContent = (available ? '✅ ' : '❌ ') + serviceNames[id];
+        } else {
+            document.getElementById(id).textContent = '❌ ' + serviceNames[id];
+        }
+    });
 }
 
 async function voteFilm(choice) {

@@ -20,14 +20,16 @@ def init_db():
     CREATE TABLE IF NOT EXISTS sessions (
         session_id TEXT PRIMARY KEY,
         user1_votes TEXT,
-        user2_votes TEXT
+        user2_votes TEXT,
+        movie_order TEXT,
+        services TEXT
     )
     ''')
     c.execute('''
     CREATE TABLE IF NOT EXISTS movies (
         id INTEGER PRIMARY KEY,
         title TEXT,
-        poster TEXT,
+        poster_url TEXT,
         imdb_id TEXT,
         sources TEXT
     )
@@ -42,17 +44,21 @@ init_db()
 def index():
     return render_template('create.html', session_id=None, share_link=None)
 
-
 @app.route('/create')
 def create_session():
+    services = request.args.get('services', 'netflix,prime,disney_plus,iplayer,all4').split(',')
+
     session_id = str(uuid.uuid4())
+
     conn = sqlite3.connect(DB)
     c = conn.cursor()
+    c.execute("SELECT id FROM movies")
+    movie_ids = [row[0] for row in c.fetchall()]
+    random.shuffle(movie_ids)
 
-    # Save empty votes for the session
     c.execute(
-        "INSERT INTO sessions (session_id, user1_votes, user2_votes) VALUES (?, ?, ?)",
-        (session_id, "{}", "{}")
+        "INSERT INTO sessions (session_id, user1_votes, user2_votes, movie_order, services) VALUES (?, ?, ?, ?, ?)",
+        (session_id, "{}", "{}", json.dumps(movie_ids), json.dumps(services))
     )
     conn.commit()
     conn.close()
@@ -60,33 +66,46 @@ def create_session():
     share_link = url_for('session_page', session_id=session_id, user='user2', _external=True)
     return render_template('create.html', session_id=session_id, share_link=share_link)
 
-
 @app.route('/session/<session_id>/<user>')
 def session_page(session_id, user):
     return render_template('swipe_socket.html', session_id=session_id, user=user)
 
-
 @app.route('/next_film/<session_id>/<user>')
 def next_film(session_id, user):
     conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute("SELECT user1_votes, user2_votes FROM sessions WHERE session_id=?", (session_id,))
+    c.execute("SELECT user1_votes, user2_votes, movie_order, services FROM sessions WHERE session_id=?", (session_id,))
     row = c.fetchone()
-    votes1 = json.loads(row["user1_votes"] or "{}")
-    votes2 = json.loads(row["user2_votes"] or "{}")
+    if not row:
+        conn.close()
+        return jsonify(None)
 
-    # Fetch movies in order
-    c.execute("SELECT * FROM movies ORDER BY id")
-    movies = c.fetchall()
-    for film_row in movies:
-        film_id = str(film_row["id"])
-        if film_id not in votes1 and film_id not in votes2:
-            film = dict(film_row)
-            film["sources"] = json.loads(film["sources"])
-            film["poster"] = film.get("poster") or ""
+    votes1 = json.loads(row[0] or "{}")
+    votes2 = json.loads(row[1] or "{}")
+    movie_order = json.loads(row[2])
+    allowed_services = json.loads(row[3])
+
+    for film_id in movie_order:
+        if str(film_id) in votes1 or str(film_id) in votes2:
+            continue
+
+        c.execute("SELECT title, poster_url, sources FROM movies WHERE id=?", (film_id,))
+        movie = c.fetchone()
+        if not movie:
+            continue
+
+        title, poster_url, sources_json = movie
+        sources = json.loads(sources_json)
+
+        # Filter by allowed streaming services
+        if any(sources.get(s) for s in allowed_services):
             conn.close()
-            return jsonify(film)
+            return jsonify({
+                "id": film_id,
+                "title": title,
+                "poster_url": poster_url,
+                "sources": sources
+            })
 
     conn.close()
     return jsonify(None)
@@ -96,7 +115,8 @@ def next_film(session_id, user):
 def vote(session_id, user):
     data = request.json
     film_id = str(data.get('film_id'))
-    vote_value = bool(data.get('vote'))
+    vote_value = data.get('vote')
+    vote_value = bool(vote_value) if not isinstance(vote_value, str) else vote_value.lower() == 'true'
 
     conn = sqlite3.connect(DB)
     c = conn.cursor()
@@ -115,24 +135,7 @@ def vote(session_id, user):
     conn.commit()
     conn.close()
 
-    # Calculate matches
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT * FROM movies")
-    movies = c.fetchall()
-    matches = []
-    for film_row in movies:
-        film_id_str = str(film_row["id"])
-        if votes1.get(film_id_str) and votes2.get(film_id_str):
-            film = dict(film_row)
-            film["sources"] = json.loads(film["sources"])
-            film["poster"] = film.get("poster") or ""
-            matches.append(film)
-    socketio.emit('update_matches', matches, room=session_id)
-
     return jsonify(success=True)
-
 
 # --- Socket.IO ---
 @socketio.on('join')
@@ -140,8 +143,17 @@ def on_join(data):
     session_id = data['session_id']
     join_room(session_id)
 
-
 # --- Run ---
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    socketio.run(app, host='0.0.0.0', port=port, debug=True)
+    import socket
+
+    # Automatically find a free port
+    s = socket.socket()
+    s.bind(('', 0))
+    free_port = s.getsockname()[1]
+    s.close()
+
+    print(f"✅ Starting Flask app on http://127.0.0.1:{free_port}")
+
+    # Use Werkzeug (no eventlet)
+    socketio.run(app, host='127.0.0.1', port=free_port, debug=True, use_reloader=False, allow_unsafe_werkzeug=True)

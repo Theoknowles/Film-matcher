@@ -6,26 +6,46 @@
     <style>
         body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
         input { width: 60%; padding: 10px; font-size: 16px; }
-        a.button {
-            display: inline-block; margin-top: 20px; padding: 10px 20px; background: #4CAF50; color: white;
-            text-decoration: none; border-radius: 8px;
-        }
+        a.button, button { display: inline-block; margin-top: 20px; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 8px; }
+        label { margin: 0 10px; }
     </style>
 </head>
 <body>
     <h1>🎬 Film Matcher</h1>
-    <p>Share this link with your friend to join the session:</p>
-    <input type="text" value="{{ share_link }}" readonly id="session-link">
-    <br>
-    <a href="{{ url_for('session_page', session_id=session_id, user='user1') }}" class="button">Start as User 1</a>
 
-    <script>
-        const input = document.getElementById('session-link');
-        input.addEventListener('click', () => {
-            input.select();
-            document.execCommand('copy');
-            alert('Link copied to clipboard!');
-        });
-    </script>
+    {% if session_id %}
+        <p>Share this link with your friend to join the session:</p>
+        <input type="text" value="{{ share_link }}" readonly id="session-link">
+        <br>
+        <a href="{{ url_for('session_page', session_id=session_id, user='user1') }}" class="button">Start as User 1</a>
+        <script>
+            const input = document.getElementById('session-link');
+            input.addEventListener('click', () => {
+                input.select();
+                document.execCommand('copy');
+                alert('Link copied to clipboard!');
+            });
+        </script>
+    {% else %}
+        <h2>Select Streaming Services You Have Access To:</h2>
+        <form id="service-form">
+            <label><input type="checkbox" name="services" value="netflix" checked> Netflix</label>
+            <label><input type="checkbox" name="services" value="prime" checked> Prime</label>
+            <label><input type="checkbox" name="services" value="disney_plus" checked> Disney+</label>
+            <label><input type="checkbox" name="services" value="iplayer" checked> iPlayer</label>
+            <label><input type="checkbox" name="services" value="all4" checked> All4</label>
+            <br>
+            <button type="submit" class="button">Create Session</button>
+        </form>
+        <script>
+            document.getElementById('service-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const selected = Array.from(document.querySelectorAll('input[name="services"]:checked')).map(cb => cb.value);
+                const res = await fetch(`/create?services=${selected.join(",")}`);
+                const data = await res.text();
+                document.body.innerHTML = data;  // render new page with session link
+            });
+        </script>
+    {% endif %}
 </body>
 </html>

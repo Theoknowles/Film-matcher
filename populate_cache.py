@@ -10,8 +10,21 @@ OMDB_API_KEY = os.environ.get("OMDB_API_KEY")
 conn = sqlite3.connect(DB)
 c = conn.cursor()
 
+# Create table if it doesn't exist, including all new columns
+c.execute('''
+CREATE TABLE IF NOT EXISTS movies (
+    id INTEGER PRIMARY KEY,
+    title TEXT,
+    poster_url TEXT,
+    imdb_id TEXT,
+    sources TEXT
+)
+''')
+conn.commit()
+
 # --- Fetch titles from Watchmode ---
-url = f"https://api.watchmode.com/v1/list-titles/?apiKey={WATCHMODE_API_KEY}&types=movie&limit=5"
+limit = 10  # For testing, limit the number of requests
+url = f"https://api.watchmode.com/v1/list-titles/?apiKey={WATCHMODE_API_KEY}&types=movie&limit={limit}"
 print("Fetching Watchmode titles from:", url)
 res = requests.get(url)
 if res.status_code != 200:
@@ -26,25 +39,27 @@ added_count = 0
 for t in titles:
     movie_id = t['id']
     title = t['title']
-    imdb_id = t.get('imdb_id')  # used for OMDb
+    imdb_id = t.get('imdb_id')
 
-    # Fetch sources
+    # Fetch sources for this title
     sources_url = f"https://api.watchmode.com/v1/title/{movie_id}/sources/?apiKey={WATCHMODE_API_KEY}"
     sources_res = requests.get(sources_url)
     if sources_res.status_code != 200:
         print(f"Fetching sources for {title} ({movie_id}) - Status: {sources_res.status_code}")
         continue
-    sources = sources_res.json()
+    sources_data = sources_res.json()
 
-    # Filter for Netflix, Prime, Disney+ (GB)
+    # Filter for streaming availability in GB
     availability = {
-        "netflix": any(s['name'] == 'Netflix' and s['region'] == 'GB' for s in sources),
-        "prime": any(s['name'] == 'Amazon Prime Video' and s['region'] == 'GB' for s in sources),
-        "disney_plus": any(s['name'] == 'Disney Plus' and s['region'] == 'GB' for s in sources)
+        "netflix": any(s['name'] == 'Netflix' and s['region'] == 'GB' for s in sources_data),
+        "prime": any(s['name'] == 'Amazon Prime Video' and s['region'] == 'GB' for s in sources_data),
+        "disney_plus": any(s['name'] == 'Disney Plus' and s['region'] == 'GB' for s in sources_data),
+        "iplayer": any(s['name'] == 'BBC iPlayer' and s['region'] == 'GB' for s in sources_data),
+        "all4": any(s['name'] == 'All 4' and s['region'] == 'GB' for s in sources_data),
     }
 
     if not any(availability.values()):
-        print(f"Skipping {title} - not available on Netflix, Prime, or Disney+ in GB")
+        print(f"Skipping {title} - not available on any target service in GB")
         continue
 
     # Fetch poster from OMDb
@@ -64,7 +79,7 @@ for t in titles:
 
     # Insert into DB
     c.execute(
-        "INSERT OR REPLACE INTO movies (id, title, poster, imdb_id, sources) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO movies (id, title, poster_url, imdb_id, sources) VALUES (?, ?, ?, ?, ?)",
         (movie_id, title, poster_url, imdb_id, json.dumps(availability))
     )
     print(f"Added {title} - Poster: {'Yes' if poster_url else 'No'}, Availability: {availability}")
